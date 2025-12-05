@@ -183,7 +183,9 @@ merge_files() {
     rm -f "$tmpfile"
     
     for file in "${files[@]}"; do
-        local escaped_file=$(echo "$file" | sed "s/'/'\\\\''/g")
+        # Zorg voor absoluut pad
+        local abs_file=$(realpath "$file" 2>/dev/null || echo "$file")
+        local escaped_file=$(echo "$abs_file" | sed "s/'/'\\\\''/g")
         echo "file '$escaped_file'" >> "$tmpfile"
     done
     
@@ -292,14 +294,19 @@ if [ "$num_days" -eq 1 ] && [ "$total_minutes" -le 30 ]; then
 elif [ "$num_days" -eq 1 ] && [ "$total_minutes" -gt 30 ]; then
     echo "💡 Dit is één dag met $(format_duration $total_minutes) aan video."
     echo ""
-    echo "Wil je opdelen in dagdelen (ochtend/middag/avond)?"
-    echo "  1) Ja, per dagdeel"
-    echo "  2) Nee, één bestand"
+    echo "Hoe wil je samenvoegen?"
+    echo "  1) Per dagdeel (ochtend/middag/avond)"
+    echo "  2) Eén bestand per dag"
+    echo "  3) Niet samenvoegen (alleen converteren)"
     echo ""
-    read -p "Keuze [1/2]: " choice
+    read -p "Keuze [1/2/3]: " choice
     
-    MERGE_MODE="per_dag"
-    [ "$choice" == "1" ] && USE_DAGDELEN=true || USE_DAGDELEN=false
+    case $choice in
+        1) MERGE_MODE="per_dag"; USE_DAGDELEN=true ;;
+        2) MERGE_MODE="alles"; USE_DAGDELEN=false ;;
+        3) MERGE_MODE="geen"; USE_DAGDELEN=false ;;
+        *) MERGE_MODE="alles"; USE_DAGDELEN=false ;;
+    esac
 
 elif [ "$num_days" -gt 1 ] && [ "$max_gap" -le 2 ]; then
     echo "💡 Dit lijkt op een reis of vakantie ($num_days aaneengesloten dagen)."
@@ -503,7 +510,9 @@ echo ""
 echo "🔗 Samenvoegen..."
 echo ""
 
-if [ "$MERGE_MODE" == "alles" ]; then
+if [ "$MERGE_MODE" == "geen" ]; then
+    echo "  ⏭️  Samenvoegen overgeslagen"
+elif [ "$MERGE_MODE" == "alles" ]; then
     final_name=$(generate_name "${unique_dates[@]}")
     echo "  📦 Alles → ${final_name}.mp4"
     
@@ -557,6 +566,185 @@ else
             fi
         fi
     done
+fi
+
+# === POST-PROCESSING: Kleine bestanden combineren ===
+echo ""
+echo "🔍 Analyseren van resultaten..."
+
+# Vind kleine bestanden (< 100MB)
+small_files=()
+small_dates=()
+while IFS= read -r mp4file; do
+    [ -f "$mp4file" ] || continue
+    [[ "$mp4file" == */converted/* ]] && continue
+    
+    size=$(stat -c%s "$mp4file" 2>/dev/null || echo 0)
+    size_mb=$((size / 1048576))
+    
+    if [ "$size_mb" -lt 100 ]; then
+        small_files+=("$mp4file")
+        # Extract datum uit bestandsnaam
+        basename_file=$(basename "$mp4file" .mp4)
+        small_dates+=("$basename_file")
+    fi
+done < <(find "$FINAL_DIR" -maxdepth 1 -name "*.mp4" | sort)
+
+if [ ${#small_files[@]} -gt 1 ]; then
+    echo ""
+    echo "📊 Kleine bestanden gevonden (< 100MB):"
+    for i in "${!small_files[@]}"; do
+        size=$(stat -c%s "${small_files[$i]}" 2>/dev/null || echo 0)
+        size_mb=$((size / 1048576))
+        echo "   ${small_dates[$i]} (${size_mb} MB)"
+    done
+    
+    echo ""
+    echo "Wil je kleine/korte dagen samenvoegen met aangrenzende dagen?"
+    echo "  1) Ja, combineer kleine bestanden"
+    echo "  2) Nee, laat zoals het is"
+    echo ""
+    read -p "Keuze [1/2]: " combine_choice
+    
+    if [ "$combine_choice" == "1" ]; then
+        echo ""
+        echo "🔗 Kleine bestanden combineren..."
+        
+        # Groepeer opeenvolgende kleine bestanden
+        # Simpele aanpak: combineer alle kleine bestanden die binnen 2 dagen van elkaar liggen
+        
+        all_mp4s=()
+        while IFS= read -r mp4file; do
+            [ -f "$mp4file" ] || continue
+            [[ "$mp4file" == */converted/* ]] && continue
+            all_mp4s+=("$mp4file")
+        done < <(find "$FINAL_DIR" -maxdepth 1 -name "*.mp4" | sort)
+        
+        # Maak groepen van kleine + aangrenzende bestanden
+        declare -a current_group=()
+        declare -a groups_to_merge=()
+        
+        for mp4file in "${all_mp4s[@]}"; do
+            size=$(stat -c%s "$mp4file" 2>/dev/null || echo 0)
+            size_mb=$((size / 1048576))
+            
+            if [ "$size_mb" -lt 100 ]; then
+                current_group+=("$mp4file")
+            else
+                if [ ${#current_group[@]} -gt 1 ]; then
+                    # Sla groep op om te mergen
+                    groups_to_merge+=("$(IFS='|'; echo "${current_group[*]}")")
+                fi
+                current_group=()
+            fi
+        done
+        
+        # Check laatste groep
+        if [ ${#current_group[@]} -gt 1 ]; then
+            groups_to_merge+=("$(IFS='|'; echo "${current_group[*]}")")
+        fi
+        
+        # Merge elke groep
+        for group in "${groups_to_merge[@]}"; do
+            IFS='|' read -ra group_files <<< "$group"
+            
+            # Bepaal eerste en laatste datum voor naamgeving
+            first_file=$(basename "${group_files[0]}" .mp4)
+            last_file=$(basename "${group_files[-1]}" .mp4)
+            
+            # Nieuwe naam
+            if [ "$first_file" == "$last_file" ]; then
+                new_name="$first_file"
+            else
+                # Extract dag en maand uit eerste en laatste
+                # Formaat: DD-maand-YYYY
+                first_day=$(echo "$first_file" | grep -oP '^\d+')
+                last_day=$(echo "$last_file" | grep -oP '^\d+')
+                rest=$(echo "$first_file" | sed 's/^[0-9]*-//')
+                new_name="${first_day}-${last_day}-${rest}"
+            fi
+            
+            echo "   📦 Combineren: ${first_file} t/m ${last_file} → ${new_name}.mp4"
+            
+            # Maak filelist
+            tmpfile="/tmp/combine_$$.txt"
+            rm -f "$tmpfile"
+            for f in "${group_files[@]}"; do
+                escaped=$(echo "$f" | sed "s/'/'\\\\''/g")
+                echo "file '$escaped'" >> "$tmpfile"
+            done
+            
+            # Combineer
+            ffmpeg -f concat -safe 0 -i "$tmpfile" -c copy "$FINAL_DIR/${new_name}_combined.mp4" -y -v error -stats
+            
+            if [ $? -eq 0 ]; then
+                echo "      ✅"
+                # Verwijder originele kleine bestanden
+                for f in "${group_files[@]}"; do
+                    rm -f "$f"
+                done
+                # Hernoem combined
+                mv "$FINAL_DIR/${new_name}_combined.mp4" "$FINAL_DIR/${new_name}.mp4"
+            else
+                echo "      ❌"
+                rm -f "$FINAL_DIR/${new_name}_combined.mp4"
+            fi
+            
+            rm -f "$tmpfile"
+        done
+    fi
+fi
+
+# === CLEANUP OPTIES ===
+echo ""
+echo "🧹 Opruimen"
+echo ""
+
+# Optie 1: Converted map verwijderen
+echo "De converted map bevat losse MP4's ($converted_size)"
+echo "   📂 $OUTPUT_DIR"
+echo ""
+echo "Wil je de converted map verwijderen?"
+echo "  1) Ja, verwijder converted map"
+echo "  2) Nee, behouden"
+echo ""
+read -p "Keuze [1/2]: " cleanup_converted
+
+if [ "$cleanup_converted" == "1" ]; then
+    rm -rf "$OUTPUT_DIR"
+    echo "   ✅ Converted map verwijderd"
+fi
+
+# Optie 2: Originele bestanden verwijderen
+echo ""
+echo "⚠️  Wil je de ORIGINELE bronbestanden verwijderen?"
+echo "   📂 $(realpath "$INPUT_DIR")"
+echo "   📊 ${#source_files[@]} bestanden"
+echo "  1) Ja, verwijder originelen"
+echo "  2) Nee, behouden (aanbevolen)"
+echo ""
+read -p "Keuze [1/2]: " cleanup_originals
+
+if [ "$cleanup_originals" == "1" ]; then
+    echo ""
+    echo "🚨 WAARSCHUWING: Dit verwijdert alle originele MOD/AVI bestanden!"
+    echo "   Locatie: $INPUT_DIR"
+    echo "   Dit kan NIET ongedaan worden gemaakt!"
+    echo ""
+    read -p "Weet je het ZEKER? Type 'JA' om te bevestigen: " confirm
+    
+    if [ "$confirm" == "JA" ]; then
+        for file in "${source_files[@]}"; do
+            [[ "$file" =~ \.(mp4|MP4)$ ]] && continue
+            rm -f "$file"
+            # Verwijder ook bijbehorende MOI bestanden
+            moi_file="${file%.*}.MOI"
+            [ -f "$moi_file" ] && rm -f "$moi_file"
+        done
+        echo "   ✅ Originele bestanden verwijderd"
+    else
+        echo "   ❌ Geannuleerd - originelen behouden"
+    fi
 fi
 
 echo ""
