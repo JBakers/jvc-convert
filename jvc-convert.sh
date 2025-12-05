@@ -308,7 +308,7 @@ elif [ "$num_days" -eq 1 ] && [ "$total_minutes" -gt 30 ]; then
         *) MERGE_MODE="alles"; USE_DAGDELEN=false ;;
     esac
 
-elif [ "$num_days" -gt 1 ] && [ "$max_gap" -le 2 ]; then
+elif [ "$num_days" -gt 1 ] && [ "$max_gap" -le 7 ]; then
     echo "💡 Dit lijkt op een reis of vakantie ($num_days aaneengesloten dagen)."
     echo ""
     echo "Hoe wil je samenvoegen?"
@@ -337,7 +337,7 @@ elif [ "$num_days" -gt 1 ] && [ "$max_gap" -le 2 ]; then
         esac
     fi
 
-elif [ "$num_days" -gt 1 ] && [ "$max_gap" -gt 2 ]; then
+elif [ "$num_days" -gt 1 ] && [ "$max_gap" -gt 7 ]; then
     echo "💡 Dit zijn $num_days losse dagen verspreid over langere periode."
     echo "   → Per dag samenvoegen (logisch voor losse momenten)"
     echo ""
