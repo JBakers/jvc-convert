@@ -1,10 +1,11 @@
 # JVC Video Converter
 
-A smart bash script for converting and merging old camcorder videos (MOD/AVI) to MP4.
+A smart bash script for converting and merging old camcorder videos (MOD/AVI) and Milestone XProtect CCTV backups to MP4.
 
 ## Features
 
-- 🎥 **Supports MOD, AVI and MP4** files
+- 🎥 **Supports MOD, AVI, MP4 and XProtect CCTV** files
+- 📡 **Automatic XProtect extraction** - extracts video from CCTV backup folders
 - 🔍 **Recursive search** in subdirectories (max 3 levels deep)
 - 📅 **Smart analysis** - detects if it's a trip/vacation or separate days
 - 🔧 **Automatic deinterlacing** - only when needed
@@ -17,9 +18,13 @@ A smart bash script for converting and merging old camcorder videos (MOD/AVI) to
 ## Requirements
 
 - Linux (tested on Debian 13)
-- ffmpeg with VAAPI support
+- ffmpeg with video codec support (libx265 for CPU, VAAPI for GPU)
 - exiftool (`sudo apt install libimage-exiftool-perl`)
 - bc (`sudo apt install bc`)
+
+### Optional (for faster GPU encoding)
+- VAAPI support: Intel Media Driver or MESA VAAPI
+- GPU: Intel or AMD processor (optional, falls back to CPU)
 
 ## Installation
 ```bash
@@ -45,27 +50,47 @@ The script analyzes the files and asks smart questions:
 ```
 🎥 Video Converter Tool
 =======================
-📁 Found: 231 MOD, 0 AVI files - converting
+📁 Found: 1 XProtect CCTV backup(s), 0 MOD, 0 AVI files
 🔍 Analyzing files...
-   📂 231 files found
+   📂 N files found
+
+📡 XProtect CCTV backup(s) processing...
+   📁 Export 22-11-2013 13-35-45
+   ✅ Extracted
 
 📊 Analysis result:
-   📅 18 day(s)
-   ⏱️  2 hours 51 min total
-   💾 11.16 GB source data
-   📆 Maximum gap between days: 3 day(s)
+   📅 1 day(s)
+   ⏱️  2 hours 15 min total
+   💾 2.34 GB source data
+```
 
-   📋 Overview per day:
-      Wed 28 Apr 2010         1 files,   1 min 21 sec
-      Thu 29 Apr 2010         6 files,   4 min 32 sec
-      ...
+### XProtect CCTV Support
 
-💡 This looks like a trip or vacation (18 consecutive days).
+The script now supports **Milestone XProtect CCTV backups**! When XProtect folders are detected:
 
-How do you want to merge?
-  1) One file per day
-  2) Per day, split long days into time periods
-  3) Everything in one file
+1. **Automatic detection** - Finds `XProtect Files` folders at any level (up to 3 folders deep)
+2. **Video extraction** - Automatically extracts MPEG video from `.blk` block files
+3. **Format conversion** - Converts extracted MPEG to efficient H.265/HEVC format
+4. **Integration** - Treats extracted videos like regular video files for merging/organizing
+
+**XProtect folder structure:**
+```
+~/Video's/temp cctv/
+└── Export 22-11-2013 13-35-45/
+    ├── autorun.inf
+    ├── SmartClient-Player.exe
+    └── XProtect Files/
+        ├── Client/
+        ├── Data/
+        │   ├── CustomSettings/
+        │   ├── Mediadata/
+        │   │   └── [GUID]/
+        │   │       └── [Camera-ID]/
+        │   │           └── block0.blk  ← Video file
+        │   │           ├── pindex.idx
+        │   │           └── config.xml
+        │   └── ...
+        └── Exported Project.scp
 ```
 
 ## Output
@@ -73,10 +98,9 @@ How do you want to merge?
 Files are saved to `~/Video's/JVC Geconverteerd/[Name] ([Date range])/`:
 ```
 ~/Video's/JVC Geconverteerd/
-└── Cuba Vacation (28-04-2010 to 15-05-2010)/
+└── CCTV Backup November 2013 (22-11-2013)/
     ├── converted/          # Individual converted MP4s
-    ├── 28-april-2010.mp4   # Merged day
-    ├── 29-april-2010.mp4
+    ├── 22-11-2013.mp4      # Merged video
     └── ...
 ```
 
