@@ -850,6 +850,8 @@ echo "🧹 Opruimen"
 echo ""
 
 # Optie 1: Converted map verwijderen
+converted_size=$(du -sh "$OUTPUT_DIR" 2>/dev/null | cut -f1)
+[ -z "$converted_size" ] && converted_size="0"
 echo "De converted map bevat losse MP4's ($converted_size)"
 echo "   📂 $OUTPUT_DIR"
 echo ""
