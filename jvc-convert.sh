@@ -14,9 +14,16 @@ mod_count=$(find "$INPUT_DIR" -maxdepth 3 -type f -iname "*.MOD" 2>/dev/null | w
 avi_count=$(find "$INPUT_DIR" -maxdepth 3 -type f -iname "*.avi" 2>/dev/null | wc -l)
 mp4_count=$(find "$INPUT_DIR" -maxdepth 3 -type f -iname "*.mp4" 2>/dev/null | wc -l)
 
-total_source=$((mod_count + avi_count))
+# Check voor XProtect mappen
+xprotect_count=$(find "$INPUT_DIR" -maxdepth 3 -type d -name "XProtect Files" 2>/dev/null | wc -l)
 
-if [ "$total_source" -gt 0 ]; then
+total_source=$((mod_count + avi_count + xprotect_count))
+
+if [ "$xprotect_count" -gt 0 ]; then
+    echo "📁 Gevonden: $xprotect_count XProtect CCTV backup(s), $mod_count MOD, $avi_count AVI bestanden"
+    MODE="convert"
+    FILE_COUNT=$((xprotect_count + mod_count + avi_count))
+elif [ "$total_source" -gt 0 ]; then
     echo "📁 Gevonden: $mod_count MOD, $avi_count AVI bestanden - gaan converteren"
     MODE="convert"
     FILE_COUNT=$total_source
@@ -25,7 +32,7 @@ elif [ "$mp4_count" -gt 0 ]; then
     MODE="merge"
     FILE_COUNT=$mp4_count
 else
-    echo "❌ Geen MOD, AVI of MP4 bestanden gevonden"
+    echo "❌ Geen MOD, AVI, MP4 of XProtect bestanden gevonden"
     exit 1
 fi
 
@@ -102,6 +109,95 @@ get_dagdeel() {
 get_duration() {
     local file="$1"
     ffprobe -v error -show_entries format=duration -of default=noprint_wrappers=1:nokey=1 "$file" 2>/dev/null | cut -d. -f1
+}
+
+# Functie om XProtect CCTV backup te verwerken
+extract_xprotect() {
+    local xprotect_dir="$1"
+    local output_dir="$2"
+    
+    if [ ! -d "$xprotect_dir" ]; then
+        return 1
+    fi
+    
+    # Zoek .blk bestanden die groot genoeg zijn voor video (>1MB)
+    local video_blk_files=()
+    while IFS= read -r blk; do
+        [ -f "$blk" ] && video_blk_files+=("$blk")
+    done < <(find "$xprotect_dir" -type f -name "*.blk" -size +1M 2>/dev/null | sort)
+    
+    # Geen grote .blk bestanden = waarschijnlijk leeg backup
+    if [ ${#video_blk_files[@]} -eq 0 ]; then
+        return 1
+    fi
+    
+    # XProtect blokbestanden kunnen verschillende formaten bevatten:
+    # - MJPEG (Motion JPEG) - meest gebruikelijk
+    # - H.264 - sommige moderne systemen
+    # - Proprietary containers - mogelijk niet decodeerbaar
+    local extracted_count=0
+    local blk_idx=0
+    local skip_count=0
+    
+    for blk_file in "${video_blk_files[@]}"; do
+        local output_file="$output_dir/xprotect_${blk_idx}.mp4"
+        
+        # Skip als al geconverteerd
+        [ -f "$output_file" ] && { ((blk_idx++)); continue; }
+        
+        # Probeer VAAPI GPU encoding eerst (timeout 30s voor veiligheid)
+        if timeout 30 ffmpeg -hwaccel vaapi -hwaccel_device /dev/dri/renderD128 \
+            -i "$blk_file" \
+            -c:v hevc_vaapi -qp 26 \
+            -c:a aac -b:a 192k \
+            "$output_file" -y -v error -stats < /dev/null 2>/dev/null; then
+            
+            if [ -f "$output_file" ] && [ -s "$output_file" ]; then
+                ((extracted_count++))
+                ((blk_idx++))
+                continue
+            else
+                rm -f "$output_file"
+            fi
+        fi
+        
+        # Fallback naar CPU encoding (libx265) - timeout 60s
+        if timeout 60 ffmpeg -i "$blk_file" \
+            -c:v libx265 -crf 26 \
+            -c:a aac -b:a 192k \
+            "$output_file" -y -v error -stats < /dev/null 2>/dev/null; then
+            
+            if [ -f "$output_file" ] && [ -s "$output_file" ]; then
+                ((extracted_count++))
+                ((blk_idx++))
+                continue
+            else
+                rm -f "$output_file"
+            fi
+        fi
+        
+        # Laatste fallback: copy streams zonder re-encoding (timeout 30s)
+        if timeout 30 ffmpeg -i "$blk_file" \
+            -c:v copy -c:a aac -b:a 192k \
+            "$output_file" -y -v error < /dev/null 2>/dev/null; then
+            
+            if [ -f "$output_file" ] && [ -s "$output_file" ]; then
+                ((extracted_count++))
+                ((blk_idx++))
+                continue
+            else
+                rm -f "$output_file"
+            fi
+        fi
+        
+        # Bestand kon niet worden gedecodeerd (korrupt, onbekend formaat, permissies, etc.)
+        ((skip_count++))
+        ((blk_idx++))
+    done
+    
+    # Return success als we minstens 1 bestand hebben geëxtraheerd
+    # Sommige XProtect backups kunnen partially corrupted zijn
+    return $((extracted_count > 0 ? 0 : 1))
 }
 
 # Functie om minuten naar leesbare tijd te converteren
@@ -208,11 +304,44 @@ declare -a all_dates
 echo ""
 echo "🔍 Bestanden analyseren..."
 
+# Eerst XProtect CCTV backups verwerken (als aanwezig)
+xprotect_dirs=()
+while IFS= read -r xp_dir; do
+    [ -d "$xp_dir" ] && xprotect_dirs+=("$xp_dir")
+done < <(find "$INPUT_DIR" -maxdepth 3 -type d -name "XProtect Files" 2>/dev/null)
+
+xprotect_extracted=0
+temp_convert_dir=""
+if [ ${#xprotect_dirs[@]} -gt 0 ]; then
+    echo "   📡 XProtect CCTV backup(s) verwerken..."
+    temp_convert_dir="/tmp/jvc_xprotect_$$"
+    mkdir -p "$temp_convert_dir"
+    
+    for xp_dir in "${xprotect_dirs[@]}"; do
+        xp_name=$(basename "$(dirname "$xp_dir")")
+        echo "      📁 $xp_name"
+        if extract_xprotect "$xp_dir" "$temp_convert_dir"; then
+            ((xprotect_extracted++))
+            echo "         ✅ Videobestanden geëxtraheerd"
+        else
+            echo "         ⚠️  Geen videodata gevonden in deze backup"
+        fi
+    done
+    
+    if [ "$xprotect_extracted" -gt 0 ]; then
+        echo ""
+    else
+        # Geen succesvolle extracties
+        rm -rf "$temp_convert_dir"
+        temp_convert_dir=""
+    fi
+fi
+
 # Verzamel alle bronbestanden (recursief, max 3 diep)
 source_files=()
 while IFS= read -r f; do
     [ -f "$f" ] && source_files+=("$f")
-done < <(find "$INPUT_DIR" -maxdepth 3 -type f \( -iname "*.MOD" -o -iname "*.avi" -o -iname "*.mp4" \) 2>/dev/null | sort)
+done < <((find "$INPUT_DIR" -maxdepth 3 -type f \( -iname "*.MOD" -o -iname "*.avi" -o -iname "*.mp4" \) 2>/dev/null; [ -n "$temp_convert_dir" ] && find "$temp_convert_dir" -maxdepth 1 -type f -iname "*.mp4" 2>/dev/null) | sort)
 
 echo "   📂 ${#source_files[@]} bestanden gevonden"
 
@@ -386,6 +515,11 @@ FINAL_DIR="$BASE_DIR/$COLLECTIE_NAAM ($DATE_RANGE)"
 OUTPUT_DIR="$FINAL_DIR/converted"
 mkdir -p "$OUTPUT_DIR"
 
+# Kopie geëxtraheerde XProtect bestanden naar output dir
+if [ -n "$temp_convert_dir" ] && [ -d "$temp_convert_dir" ]; then
+    cp "$temp_convert_dir"/*.mp4 "$OUTPUT_DIR/" 2>/dev/null
+fi
+
 echo ""
 echo "📂 Output: $FINAL_DIR"
 echo "📦 Modus: $MERGE_MODE$([ "$USE_DAGDELEN" == true ] && echo " (met dagdelen)")"
@@ -418,7 +552,11 @@ if [ "$MODE" == "convert" ]; then
         
         [ -z "$just_date" ] && just_date="onbekend"
         
-        output_name="${just_date}_${just_time//:/}_${base_name}.mp4"
+        # Bepaal extension
+        ext="${file##*.}"
+        [[ "$ext" =~ ^(mpg|MPEG|mpeg)$ ]] && ext="mp4"  # MPG/MPEG converteren naar MP4
+        
+        output_name="${just_date}_${just_time//:/}_${base_name}.${ext,,}"
         output_name="${output_name// /_}"
         
         # Progress indicator
@@ -446,8 +584,11 @@ if [ "$MODE" == "convert" ]; then
         
         echo "   📅 $just_date $just_time ($dagdeel)"
         
-        # Check of deinterlacing nodig is
-        if needs_deinterlace "$file"; then
+        # Check of deinterlacing nodig is (skip voor MPG/MPEG files geëxtraheerd van XProtect)
+        if [[ "$file" =~ \.(mpg|mpeg|MPG|MPEG)$ ]]; then
+            echo "   🔧 Deinterlacing: auto (XProtect MPEG)"
+            vf_opts="yadif=1,format=nv12,hwupload"
+        elif needs_deinterlace "$file"; then
             echo "   🔧 Deinterlacing: ja"
             vf_opts="yadif=1,format=nv12,hwupload"
         else
@@ -750,3 +891,6 @@ fi
 echo ""
 echo "✨ Alles klaar!"
 echo "📂 Bestanden staan in: $FINAL_DIR"
+
+# Opruimen: Verwijder temporaire XProtect conversie map
+[ -n "$temp_convert_dir" ] && [ -d "$temp_convert_dir" ] && rm -rf "$temp_convert_dir"
