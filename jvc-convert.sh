@@ -165,7 +165,8 @@ extract_xprotect() {
         [ -f "$output_file" ] && { ((blk_idx++)); continue; }
         
         # Probeer VAAPI GPU encoding eerst (timeout 30s voor veiligheid)
-        if timeout 30 ffmpeg -hwaccel vaapi -hwaccel_device /dev/dri/renderD128 \
+        if run_with_spinner "         ⏳ blk $blk_idx (VAAPI)" \
+            timeout 30 ffmpeg -hwaccel vaapi -hwaccel_device /dev/dri/renderD128 \
             -i "$blk_file" \
             -c:v hevc_vaapi -qp 26 \
             -c:a aac -b:a 192k \
@@ -181,7 +182,8 @@ extract_xprotect() {
         fi
         
         # Fallback naar CPU encoding (libx265) - timeout 60s
-        if timeout 60 ffmpeg -i "$blk_file" \
+        if run_with_spinner "         ⏳ blk $blk_idx (CPU)" \
+            timeout 60 ffmpeg -i "$blk_file" \
             -c:v libx265 -crf 26 \
             -c:a aac -b:a 192k \
             "$output_file" -y -v error -stats < /dev/null 2>/dev/null; then
@@ -196,7 +198,8 @@ extract_xprotect() {
         fi
         
         # Laatste fallback: copy streams zonder re-encoding (timeout 30s)
-        if timeout 30 ffmpeg -i "$blk_file" \
+        if run_with_spinner "         ⏳ blk $blk_idx (copy)" \
+            timeout 30 ffmpeg -i "$blk_file" \
             -c:v copy -c:a aac -b:a 192k \
             "$output_file" -y -v error < /dev/null 2>/dev/null; then
             
@@ -240,28 +243,32 @@ salvage_xprotect() {
         [ -s "$out_file" ] && { idx=$((idx + 1)); continue; }
 
         # Probeer MJPEG
-        if timeout 60 ffmpeg -hide_banner -v error -f mjpeg -i "$blk" -c:v libx265 -crf 26 -c:a aac -b:a 192k "$out_file" -y 2>/dev/null && [ -s "$out_file" ]; then
+        if run_with_spinner "         ⏳ salvage blk $idx (mjpeg)" \
+            timeout 60 ffmpeg -hide_banner -v error -f mjpeg -i "$blk" -c:v libx265 -crf 26 -c:a aac -b:a 192k "$out_file" -y 2>/dev/null && [ -s "$out_file" ]; then
             extracted_count=$((extracted_count + 1))
             idx=$((idx + 1))
             continue
         fi
 
         # Probeer H.264
-        if timeout 60 ffmpeg -hide_banner -v error -f h264 -i "$blk" -c:v libx265 -crf 26 -c:a aac -b:a 192k "$out_file" -y 2>/dev/null && [ -s "$out_file" ]; then
+        if run_with_spinner "         ⏳ salvage blk $idx (h264)" \
+            timeout 60 ffmpeg -hide_banner -v error -f h264 -i "$blk" -c:v libx265 -crf 26 -c:a aac -b:a 192k "$out_file" -y 2>/dev/null && [ -s "$out_file" ]; then
             extracted_count=$((extracted_count + 1))
             idx=$((idx + 1))
             continue
         fi
 
         # Probeer kopiëren zonder re-encode
-        if timeout 45 ffmpeg -hide_banner -v error -i "$blk" -c copy "$out_file" -y 2>/dev/null && [ -s "$out_file" ]; then
+        if run_with_spinner "         ⏳ salvage blk $idx (copy)" \
+            timeout 45 ffmpeg -hide_banner -v error -i "$blk" -c copy "$out_file" -y 2>/dev/null && [ -s "$out_file" ]; then
             extracted_count=$((extracted_count + 1))
             idx=$((idx + 1))
             continue
         fi
 
         # Laatste poging: autodetect + CPU re-encode
-        if timeout 60 ffmpeg -hide_banner -v error -i "$blk" -c:v libx265 -crf 26 -c:a aac -b:a 192k "$out_file" -y 2>/dev/null && [ -s "$out_file" ]; then
+        if run_with_spinner "         ⏳ salvage blk $idx (auto)" \
+            timeout 60 ffmpeg -hide_banner -v error -i "$blk" -c:v libx265 -crf 26 -c:a aac -b:a 192k "$out_file" -y 2>/dev/null && [ -s "$out_file" ]; then
             extracted_count=$((extracted_count + 1))
         else
             rm -f "$out_file"
