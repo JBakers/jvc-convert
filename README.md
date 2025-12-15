@@ -5,7 +5,10 @@ A smart bash script for converting and merging old camcorder videos (MOD/AVI) an
 ## Features
 
 - 🎥 **Supports MOD, AVI, MP4 and XProtect CCTV** files
-- 📡 **Automatic XProtect extraction** - extracts video from CCTV backup folders
+- 📡 **Automatic XProtect extraction**
+   - Detects `XProtect Files` folders (up to 3 levels deep)
+   - Extracts both MJPEG and H.264 block files; skips corrupted/empty blocks gracefully
+   - Uses GPU (VAAPI) when available, falls back to CPU (libx265) automatically
 - 🔍 **Recursive search** in subdirectories (max 3 levels deep)
 - 📅 **Smart analysis** - detects if it's a trip/vacation or separate days
 - 🔧 **Automatic deinterlacing** - only when needed
@@ -14,6 +17,7 @@ A smart bash script for converting and merging old camcorder videos (MOD/AVI) an
 - 📊 **Overview per day** with duration and file size
 - 🎬 **Merge options** - per day, time of day, or all in one file
 - 🖥️ **Hardware encoding** via VAAPI (Intel/AMD GPU)
+   - Automatic CPU fallback; temporary extraction stored in `/tmp/jvc_xprotect_*` and cleaned up
 
 ## Requirements
 
@@ -21,6 +25,7 @@ A smart bash script for converting and merging old camcorder videos (MOD/AVI) an
 - ffmpeg with video codec support (libx265 for CPU, VAAPI for GPU)
 - exiftool (`sudo apt install libimage-exiftool-perl`)
 - bc (`sudo apt install bc`)
+- (Dev only) shellcheck is optional; not required to run the script
 
 ### Optional (for faster GPU encoding)
 - VAAPI support: Intel Media Driver or MESA VAAPI
@@ -69,8 +74,8 @@ The script analyzes the files and asks smart questions:
 The script now supports **Milestone XProtect CCTV backups**! When XProtect folders are detected:
 
 1. **Automatic detection** - Finds `XProtect Files` folders at any level (up to 3 folders deep)
-2. **Video extraction** - Automatically extracts MPEG video from `.blk` block files
-3. **Format conversion** - Converts extracted MPEG to efficient H.265/HEVC format
+2. **Video extraction** - Extracts MJPEG or H.264 video from `.blk` block files; corrupt blocks are skipped
+3. **Format conversion** - Converts extracted video to efficient H.265/HEVC format (VAAPI → CPU fallback)
 4. **Integration** - Treats extracted videos like regular video files for merging/organizing
 
 **XProtect folder structure:**
@@ -101,6 +106,7 @@ Files are saved to `~/Video's/JVC Geconverteerd/[Name] ([Date range])/`:
 └── CCTV Backup November 2013 (22-11-2013)/
     ├── converted/          # Individual converted MP4s
     ├── 22-11-2013.mp4      # Merged video
+   ├── *-salvage.mp4       # Optional recovered clips if manual salvage was run
     └── ...
 ```
 
