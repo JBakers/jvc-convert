@@ -22,15 +22,13 @@ total_source=$((mod_count + avi_count + xprotect_count))
 if [ "$xprotect_count" -gt 0 ]; then
     echo "📁 Gevonden: $xprotect_count XProtect CCTV backup(s), $mod_count MOD, $avi_count AVI bestanden"
     MODE="convert"
-    FILE_COUNT=$((xprotect_count + mod_count + avi_count))
+    # Telt niet verder mee; verwijderd om shellcheck ruis te voorkomen
 elif [ "$total_source" -gt 0 ]; then
     echo "📁 Gevonden: $mod_count MOD, $avi_count AVI bestanden - gaan converteren"
     MODE="convert"
-    FILE_COUNT=$total_source
 elif [ "$mp4_count" -gt 0 ]; then
     echo "📁 Gevonden: $mp4_count MP4 bestanden - gaan samenvoegen"
     MODE="merge"
-    FILE_COUNT=$mp4_count
 else
     echo "❌ Geen MOD, AVI, MP4 of XProtect bestanden gevonden"
     exit 1
@@ -39,7 +37,8 @@ fi
 # Functie om te checken of deinterlacing nodig is
 needs_deinterlace() {
     local file="$1"
-    local field_order=$(ffprobe -v error -select_streams v:0 -show_entries stream=field_order -of default=noprint_wrappers=1:nokey=1 "$file" 2>/dev/null)
+    local field_order
+    field_order=$(ffprobe -v error -select_streams v:0 -show_entries stream=field_order -of default=noprint_wrappers=1:nokey=1 "$file" 2>/dev/null)
     
     case "$field_order" in
         tt|bb|tb|bt) return 0 ;;
@@ -50,7 +49,8 @@ needs_deinterlace() {
 # Functie om datum uit bestand te halen
 get_file_date() {
     local file="$1"
-    local filename=$(basename "$file")
+    local filename
+    filename=$(basename "$file")
     local date_str=""
     
     if [[ "$filename" =~ ^([0-9]{4})([0-9]{2})([0-9]{2})_ ]]; then
@@ -74,7 +74,8 @@ get_file_date() {
 # Functie om tijd uit bestand te halen
 get_file_time() {
     local file="$1"
-    local filename=$(basename "$file")
+    local filename
+    filename=$(basename "$file")
     local time_str=""
     
     if [[ "$filename" =~ ^[0-9]{8}_([0-9]{2})([0-9]{2}) ]]; then
@@ -218,8 +219,10 @@ check_consecutive_days() {
     
     for date in "${dates[@]}"; do
         if [ -n "$prev_date" ]; then
-            local prev_epoch=$(date -d "$prev_date" +%s 2>/dev/null)
-            local curr_epoch=$(date -d "$date" +%s 2>/dev/null)
+            local prev_epoch
+            prev_epoch=$(date -d "$prev_date" +%s 2>/dev/null)
+            local curr_epoch
+            curr_epoch=$(date -d "$date" +%s 2>/dev/null)
             local gap=$(( (curr_epoch - prev_epoch) / 86400 ))
             [ "$gap" -gt "$max_gap" ] && max_gap=$gap
         fi
@@ -238,7 +241,8 @@ generate_name() {
         return
     fi
     
-    local sorted_dates=($(printf '%s\n' "${dates[@]}" | sort -u))
+    local sorted_dates
+    mapfile -t sorted_dates < <(printf '%s\n' "${dates[@]}" | sort -u)
     local first_date="${sorted_dates[0]}"
     local last_date="${sorted_dates[-1]}"
     
@@ -280,8 +284,10 @@ merge_files() {
     
     for file in "${files[@]}"; do
         # Zorg voor absoluut pad
-        local abs_file=$(realpath "$file" 2>/dev/null || echo "$file")
-        local escaped_file=$(echo "$abs_file" | sed "s/'/'\\\\''/g")
+        local abs_file
+        abs_file=$(realpath "$file" 2>/dev/null || echo "$file")
+        local escaped_file
+        escaped_file=$(printf "%s" "$abs_file" | sed "s/'/'\\''/g")
         echo "file '$escaped_file'" >> "$tmpfile"
     done
     
@@ -361,18 +367,20 @@ for file in "${source_files[@]}"; do
 done
 
 # Bepaal statistieken
-unique_dates=($(printf '%s\n' "${all_dates[@]}" | sort -u))
+mapfile -t unique_dates < <(printf '%s\n' "${all_dates[@]}" | sort -u)
 num_days=${#unique_dates[@]}
 total_minutes=$((total_duration_sec / 60))
 max_gap=$(check_consecutive_days "${unique_dates[@]}")
 
 # Bepaal langste dag
 longest_day_minutes=0
+# shellcheck disable=SC2034 # wordt later gebruikt voor suggesties over lange dag
 longest_day=""
 for date in "${!duration_by_date[@]}"; do
     day_min=$((${duration_by_date[$date]} / 60))
     if [ "$day_min" -gt "$longest_day_minutes" ]; then
         longest_day_minutes=$day_min
+        # shellcheck disable=SC2034
         longest_day=$date
     fi
 done
