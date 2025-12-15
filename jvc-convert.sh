@@ -112,6 +112,24 @@ get_duration() {
     ffprobe -v error -show_entries format=duration -of default=noprint_wrappers=1:nokey=1 "$file" 2>/dev/null | cut -d. -f1
 }
 
+# Eenvoudige spinner voor lange taken
+run_with_spinner() {
+    local msg="$1"; shift
+    local spinner='|/-\\'
+    local i=0
+    printf "%s " "$msg"
+    "$@" &
+    local pid=$!
+    while kill -0 "$pid" 2>/dev/null; do
+        printf "\r%s %s" "$msg" "${spinner:i++%4:1}"
+        sleep 0.2
+    done
+    wait "$pid"
+    local status=$?
+    printf "\r%s %s\n" "$msg" "$([ $status -eq 0 ] && echo '✅' || echo '❌')"
+    return $status
+}
+
 # Functie om XProtect CCTV backup te verwerken
 extract_xprotect() {
     local xprotect_dir="$1"
@@ -279,20 +297,20 @@ merge_files() {
     shift
     local -a files=("$@")
     
-    local tmpfile="/tmp/filelist_$$.txt"
-    rm -f "$tmpfile"
+    local tmpfile
+    tmpfile=$(mktemp /tmp/filelist_XXXX.txt)
+    rm -f "$tmpfile" && tmpfile=$(mktemp /tmp/filelist_XXXX.txt)
     
     for file in "${files[@]}"; do
         # Zorg voor absoluut pad
         local abs_file
         abs_file=$(realpath "$file" 2>/dev/null || echo "$file")
-        local escaped_file
-        escaped_file=$(printf "%s" "$abs_file" | sed "s/'/'\\''/g")
-        echo "file '$escaped_file'" >> "$tmpfile"
+        # Gebruik %q zodat spaties en quotes veilig zijn in concat file
+        printf "file %q\n" "$abs_file" >> "$tmpfile"
     done
     
     if [ -s "$tmpfile" ]; then
-        ffmpeg -f concat -safe 0 -i "$tmpfile" -c copy "$output_path" -y -v error -stats
+        run_with_spinner "   🔗 Samenvoegen..." ffmpeg -f concat -safe 0 -i "$tmpfile" -c copy "$output_path" -y -v error -stats
         local result=$?
         rm -f "$tmpfile"
         return $result
