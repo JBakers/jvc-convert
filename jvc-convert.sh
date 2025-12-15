@@ -219,6 +219,59 @@ extract_xprotect() {
     return $((extracted_count > 0 ? 0 : 1))
 }
 
+# Brute-force salvage voor XProtect (.blk) wanneer normale extractie faalt
+salvage_xprotect() {
+    local xprotect_dir="$1"
+    local output_dir="$2"
+
+    if [ ! -d "$xprotect_dir" ]; then
+        return 1
+    fi
+
+    local -a blk_files
+    mapfile -t blk_files < <(find "$xprotect_dir" -type f -name "*.blk" -size +1M 2>/dev/null | sort)
+    [ ${#blk_files[@]} -eq 0 ] && return 1
+
+    local extracted_count=0
+    local idx=0
+
+    for blk in "${blk_files[@]}"; do
+        local out_file="$output_dir/salvage_${idx}.mp4"
+        [ -s "$out_file" ] && { idx=$((idx + 1)); continue; }
+
+        # Probeer MJPEG
+        if timeout 60 ffmpeg -hide_banner -v error -f mjpeg -i "$blk" -c:v libx265 -crf 26 -c:a aac -b:a 192k "$out_file" -y 2>/dev/null && [ -s "$out_file" ]; then
+            extracted_count=$((extracted_count + 1))
+            idx=$((idx + 1))
+            continue
+        fi
+
+        # Probeer H.264
+        if timeout 60 ffmpeg -hide_banner -v error -f h264 -i "$blk" -c:v libx265 -crf 26 -c:a aac -b:a 192k "$out_file" -y 2>/dev/null && [ -s "$out_file" ]; then
+            extracted_count=$((extracted_count + 1))
+            idx=$((idx + 1))
+            continue
+        fi
+
+        # Probeer kopiëren zonder re-encode
+        if timeout 45 ffmpeg -hide_banner -v error -i "$blk" -c copy "$out_file" -y 2>/dev/null && [ -s "$out_file" ]; then
+            extracted_count=$((extracted_count + 1))
+            idx=$((idx + 1))
+            continue
+        fi
+
+        # Laatste poging: autodetect + CPU re-encode
+        if timeout 60 ffmpeg -hide_banner -v error -i "$blk" -c:v libx265 -crf 26 -c:a aac -b:a 192k "$out_file" -y 2>/dev/null && [ -s "$out_file" ]; then
+            extracted_count=$((extracted_count + 1))
+        else
+            rm -f "$out_file"
+        fi
+        idx=$((idx + 1))
+    done
+
+    return $((extracted_count > 0 ? 0 : 1))
+}
+
 # Functie om minuten naar leesbare tijd te converteren
 format_duration() {
     local minutes=$1
@@ -336,6 +389,7 @@ done < <(find "$INPUT_DIR" -maxdepth 3 -type d -name "XProtect Files" 2>/dev/nul
 
 xprotect_extracted=0
 temp_convert_dir=""
+failed_xprotect=()
 if [ ${#xprotect_dirs[@]} -gt 0 ]; then
     echo "   📡 XProtect CCTV backup(s) verwerken..."
     temp_convert_dir="/tmp/jvc_xprotect_$$"
@@ -349,9 +403,31 @@ if [ ${#xprotect_dirs[@]} -gt 0 ]; then
             echo "         ✅ Videobestanden geëxtraheerd"
         else
             echo "         ⚠️  Geen videodata gevonden in deze backup"
+            failed_xprotect+=("$xp_dir")
         fi
     done
     
+    # Optionele salvage poging op mislukte XProtect exports
+    if [ ${#failed_xprotect[@]} -gt 0 ]; then
+        echo ""
+        echo "   🔄 Salvage poging voor ${#failed_xprotect[@]} XProtect backup(s)? (langzamer)"
+        echo "   1) Ja, probeer salvage"
+        echo "   2) Nee, overslaan"
+        read -p "   Keuze [1/2]: " salvage_choice
+        if [ "$salvage_choice" == "1" ]; then
+            for xp_dir in "${failed_xprotect[@]}"; do
+                xp_name=$(basename "$(dirname "$xp_dir")")
+                echo "      🛠️  Salvage: $xp_name"
+                if salvage_xprotect "$xp_dir" "$temp_convert_dir"; then
+                    ((xprotect_extracted++))
+                    echo "         ✅ Extra videobestanden gevonden"
+                else
+                    echo "         ⏭️  Geen extra videodata via salvage"
+                fi
+            done
+        fi
+    fi
+
     if [ "$xprotect_extracted" -gt 0 ]; then
         echo ""
     else
