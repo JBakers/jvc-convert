@@ -14,7 +14,7 @@ fi
 INPUT_DIR="."
 BASE_DIR="$HOME/Video's/JVC Geconverteerd"
 
-echo "🎥 Video Converter Tool v1.0.9"
+echo "🎥 Video Converter Tool v1.0.10"
 echo "======================="
 
 # Check bestanden (recursief, max 3 diep)
@@ -189,10 +189,10 @@ extract_xprotect() {
             fi
         fi
         
-        # Fallback naar CPU encoding (libx265) - timeout 60s
+        # Fallback naar CPU encoding (libx265) - timeout 120s, alle cores
         if run_with_spinner "         ⏳ blk $blk_idx (CPU)" \
-            timeout 60 ffmpeg -i "$blk_file" \
-            -c:v libx265 -crf 26 \
+            timeout 120 ffmpeg -i "$blk_file" \
+            -c:v libx265 -crf 26 -preset fast -threads 0 \
             -c:a aac -b:a 192k \
             "$output_file" -y -v error -stats < /dev/null 2>/dev/null; then
             
@@ -252,7 +252,9 @@ salvage_xprotect() {
 
         # Probeer MJPEG
         if run_with_spinner "         ⏳ salvage blk $idx (mjpeg)" \
-            timeout 60 ffmpeg -hide_banner -v error -f mjpeg -i "$blk" -c:v libx265 -crf 26 -c:a aac -b:a 192k "$out_file" -y 2>/dev/null && [ -s "$out_file" ]; then
+            timeout 120 ffmpeg -hide_banner -v error -f mjpeg -i "$blk" \
+            -c:v libx265 -crf 26 -preset fast -threads 0 \
+            -c:a aac -b:a 192k "$out_file" -y 2>/dev/null && [ -s "$out_file" ]; then
             extracted_count=$((extracted_count + 1))
             idx=$((idx + 1))
             continue
@@ -260,7 +262,9 @@ salvage_xprotect() {
 
         # Probeer H.264
         if run_with_spinner "         ⏳ salvage blk $idx (h264)" \
-            timeout 60 ffmpeg -hide_banner -v error -f h264 -i "$blk" -c:v libx265 -crf 26 -c:a aac -b:a 192k "$out_file" -y 2>/dev/null && [ -s "$out_file" ]; then
+            timeout 120 ffmpeg -hide_banner -v error -f h264 -i "$blk" \
+            -c:v libx265 -crf 26 -preset fast -threads 0 \
+            -c:a aac -b:a 192k "$out_file" -y 2>/dev/null && [ -s "$out_file" ]; then
             extracted_count=$((extracted_count + 1))
             idx=$((idx + 1))
             continue
@@ -276,7 +280,9 @@ salvage_xprotect() {
 
         # Laatste poging: autodetect + CPU re-encode
         if run_with_spinner "         ⏳ salvage blk $idx (auto)" \
-            timeout 60 ffmpeg -hide_banner -v error -i "$blk" -c:v libx265 -crf 26 -c:a aac -b:a 192k "$out_file" -y 2>/dev/null && [ -s "$out_file" ]; then
+            timeout 120 ffmpeg -hide_banner -v error -i "$blk" \
+            -c:v libx265 -crf 26 -preset fast -threads 0 \
+            -c:a aac -b:a 192k "$out_file" -y 2>/dev/null && [ -s "$out_file" ]; then
             extracted_count=$((extracted_count + 1))
         else
             rm -f "$out_file"
