@@ -1,6 +1,23 @@
 # Changelog
 
-## [2.0.0] - 2025-12-15
+## [1.0.8] - 2025-12-16
+
+### Added
+- **🔄 Salvage Mode** - Brute-force recovery for corrupted XProtect blocks (MJPEG/H.264/copy fallback)
+- **⏳ Spinner Progress** - Visual progress indicator during long ffmpeg operations
+- **🔢 Auto-versioning** - Pre-commit hook for automatic semver patch bump
+
+### Fixed
+- **Concat escaping** - Fixed path escaping for files with spaces/quotes in merge_files()
+- **Pre-commit sed** - Fixed invalid regex patterns in version bump hook
+
+### Changed
+- Banner now shows dynamic version from version.txt
+- Skip duplicate version bumps per commit
+
+---
+
+## [1.0.0] - 2025-12-15
 
 ### Added
 - **🎬 Milestone XProtect CCTV Support** - Automatic detection and extraction of XProtect CCTV backup folders
