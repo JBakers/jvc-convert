@@ -14,7 +14,7 @@ fi
 INPUT_DIR="."
 BASE_DIR="$HOME/Video's/JVC Geconverteerd"
 
-echo "🎥 Video Converter Tool v1.0.15"
+echo "🎥 Video Converter Tool v1.0.16"
 echo "======================="
 
 # Check bestanden (recursief, max 3 diep)
