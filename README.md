@@ -1,8 +1,8 @@
-# JVC Video Converter (v1.0.16)
+# JVC Video Converter (v1.0.6)
 
 A smart bash script for converting and merging old camcorder videos (MOD/AVI) and Milestone XProtect CCTV backups to MP4.
 
-Current version: **v1.0.16** (semver)
+Current version: **v1.0.6** (semver)
 
 ## Features
 
