@@ -3,10 +3,18 @@
 
 shopt -s nullglob
 
+# Versie (semver)
+VERSION_FILE="$(dirname "$0")/version.txt"
+if [ -f "$VERSION_FILE" ]; then
+    VERSION=$(cat "$VERSION_FILE" 2>/dev/null)
+else
+    VERSION="1.0.0"
+fi
+
 INPUT_DIR="."
 BASE_DIR="$HOME/Video's/JVC Geconverteerd"
 
-echo "🎥 Video Converter Tool"
+echo "🎥 Video Converter Tool v$VERSION"
 echo "======================="
 
 # Check bestanden (recursief, max 3 diep)
